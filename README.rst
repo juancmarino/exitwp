@@ -10,7 +10,7 @@ The latest version of these docs should always be available at https://github.co
 
 Getting started
 ===============
- * `Download <https://github.com/thomasf/exitwp/zipball/master>`_ or clone using ``git clone https://github.com/thomasf/exitwp``
+ * `Download <https://github.com/thomasf/exitwp/zipball/master>`_ or clone using ``git clone https://github.com/thomasf/exitwp.git``
  * Export one or more wordpress blogs using the wordpress exporter under tools/export in wordpress admin.
  * Put all wordpress xml files in the ``wordpress-xml`` directory
  * Special note for Wordpress 3.1, you need to add a missing namespace in rss tag : ``xmlns:atom="http://www.w3.org/2005/Atom"``
@@ -29,7 +29,7 @@ Runtime dependencies
 Installing dependencies in ubuntu/debian
 ----------------------------------------
 
-   ``sudo apt-get install python-yaml python-beautifulsoup python-html2text``
+   ``sudo apt-get install python-yaml python-bs4 python-html2text``
 
 Installing Python dependencies using python package installer (pip)
 -------------------------------------------------------------------
@@ -42,6 +42,19 @@ Note that PyYAML will require other packages to compile correctly under ubuntu/d
 
    ``sudo apt-get install libyaml-dev python-dev build-essential``
 
+Using Vagrant for dependency management
+---------------------------------------
+
+In the event your local system is incompatible with the dependencies listed (or you'd rather not install them), you can use the included Vagrantfile to start a VM with all necessary dependencies installed.
+
+1. Lint and place all wordpress xml files in the ``wordpress-xml`` directory as mentioned above
+2. In the directory of the unzipped archive, run ``vagrant up``.
+3. SSH to your Vagrant VM using ``vagrant ssh``
+4. Run ``cd /vagrant`` to open the VM's shared folder
+5. Run the converter from the VM by typing ``python exitwp.py``
+6. After the converter completes, exit the SSH session using ``exit``
+7. You should now have all the blogs converted into separate directories under the ``build`` directory
+8. **Important:** Once satisfied with the results, run ``vagrant destroy -f`` to shut down the VM and remove the virtual drive from your local machine
 
 Configuration/Customization
 ===========================

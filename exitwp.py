@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 
-from xml.etree.ElementTree import ElementTree, XMLTreeBuilder
-import os
 import codecs
-from datetime import datetime
-from glob import glob
+import os
 import re
 import sys
-import yaml
-from BeautifulSoup import BeautifulSoup
-from urlparse import urlparse, urljoin
+from datetime import datetime, timedelta, tzinfo
+from glob import glob
 from urllib import urlretrieve
+from urlparse import urljoin, urlparse
+from xml.etree.ElementTree import ElementTree, XMLTreeBuilder
+
+import yaml
+from bs4 import BeautifulSoup
+
 from html2text import html2text_file
 
 '''
@@ -36,7 +38,27 @@ date_fmt = config['date_format']
 body_replace = config['body_replace']
 
 
+# Time definitions
+ZERO = timedelta(0)
+HOUR = timedelta(hours=1)
+
+
+# UTC support
+class UTC(tzinfo):
+    """UTC."""
+
+    def utcoffset(self, dt):
+        return ZERO
+
+    def tzname(self, dt):
+        return 'UTC'
+
+    def dst(self, dt):
+        return ZERO
+
+
 class ns_tracker_tree_builder(XMLTreeBuilder):
+
     def __init__(self):
         XMLTreeBuilder.__init__(self)
         self._parser.StartNamespaceDeclHandler = self._start_ns
@@ -59,7 +81,7 @@ def html2fmt(html, target_format):
 def parse_wp_xml(file):
     parser = ns_tracker_tree_builder()
     tree = ElementTree()
-    print "reading: " + wpe
+    print 'reading: ' + wpe
     root = tree.parse(file, parser)
     ns = parser.namespaces
     ns[''] = ''
@@ -68,9 +90,9 @@ def parse_wp_xml(file):
 
     def parse_header():
         return {
-            "title": unicode(c.find('title').text),
-            "link": unicode(c.find('link').text),
-            "description": unicode(c.find('description').text)
+            'title': unicode(c.find('title').text),
+            'link': unicode(c.find('link').text),
+            'description': unicode(c.find('description').text)
         }
 
     def parse_items():
@@ -80,16 +102,19 @@ def parse_wp_xml(file):
             taxanomies = i.findall('category')
             export_taxanomies = {}
             for tax in taxanomies:
-                if not "domain" in tax.attrib:
+                if 'domain' not in tax.attrib:
                     continue
                 t_domain = unicode(tax.attrib['domain'])
                 t_entry = unicode(tax.text)
-                if (not (t_domain in taxonomy_filter) and not (t_domain in taxonomy_entry_filter and taxonomy_entry_filter[t_domain] == t_entry)):
-                    if not t_domain in export_taxanomies:
+                if (not (t_domain in taxonomy_filter) and
+                    not (t_domain
+                         in taxonomy_entry_filter and
+                         taxonomy_entry_filter[t_domain] == t_entry)):
+                    if t_domain not in export_taxanomies:
                         export_taxanomies[t_domain] = []
                     export_taxanomies[t_domain].append(t_entry)
 
-            def gi(q, unicode_wrap=True):
+            def gi(q, unicode_wrap=True, empty=False):
                 namespace = ''
                 tag = ''
                 if q.find(':') > 0:
@@ -98,9 +123,11 @@ def parse_wp_xml(file):
                     tag = q
                 try:
                     result = i.find(ns[namespace] + tag).text
-                    print result
+                    print result.encode('utf-8')
                 except AttributeError:
-                    result = "No Content Found"
+                    result = 'No Content Found'
+                    if empty:
+                        result = ''
                 if unicode_wrap:
                     result = unicode(result)
                 return result
@@ -114,16 +141,20 @@ def parse_wp_xml(file):
             if body is not None:
                 try:
                     soup = BeautifulSoup(body)
-                    img_tags = soup.findAll('img')
+                    img_tags = soup.find_all('img')
                     for img in img_tags:
                         img_srcs.append(img['src'])
                 except:
-                    print "could not parse html: " + body
-            #print img_srcs
+                    print 'could not parse html: ' + body
+            # print img_srcs
+
+            excerpt = gi('excerpt:encoded', empty=True)
 
             export_item = {
                 'title': gi('title'),
-                'date': gi('wp:post_date'),
+                'link': gi('link'),
+                'author': gi('dc:creator'),
+                'date': gi('wp:post_date_gmt'),
                 'slug': gi('wp:post_name'),
                 'status': gi('wp:status'),
                 'type': gi('wp:post_type'),
@@ -132,6 +163,7 @@ def parse_wp_xml(file):
                 'comments': gi('wp:comment_status') == u'open',
                 'taxanomies': export_taxanomies,
                 'body': body,
+                'excerpt': excerpt,
                 'img_srcs': img_srcs
             }
 
@@ -147,7 +179,7 @@ def parse_wp_xml(file):
 
 def write_jekyll(data, target_format):
 
-    sys.stdout.write("writing")
+    sys.stdout.write('writing')
     item_uids = {}
     attachments = {}
 
@@ -211,7 +243,7 @@ def write_jekyll(data, target_format):
         filename_parts.append(target_format)
         return ''.join(filename_parts)
 
-    def get_attachment_path(src, dir, dir_prefix='a'):
+    def get_attachment_path(src, dir, dir_prefix='images'):
         try:
             files = attachments[dir]
         except KeyError:
@@ -220,7 +252,8 @@ def write_jekyll(data, target_format):
         try:
             filename = files[src]
         except KeyError:
-            file_root, file_ext = os.path.splitext(os.path.basename(urlparse(src)[2]))
+            file_root, file_ext = os.path.splitext(os.path.basename(
+                urlparse(src)[2]))
             file_infix = 1
             if file_root == '':
                 file_root = '1'
@@ -237,8 +270,8 @@ def write_jekyll(data, target_format):
         if (not os.path.exists(target_dir)):
             os.makedirs(target_dir)
 
-        #if src not in attachments[dir]:
-        ##print target_name
+        # if src not in attachments[dir]:
+        #     print target_name
         return target_file
 
     for i in data['items']:
@@ -252,16 +285,21 @@ def write_jekyll(data, target_format):
         if(skip_item):
             continue
 
-        sys.stdout.write(".")
+        sys.stdout.write('.')
         sys.stdout.flush()
         out = None
         yaml_header = {
             'title': i['title'],
-            'date': datetime.strptime(i['date'], '%Y-%m-%d %H:%M:%S'),
+            'link': i['link'],
+            'author': i['author'],
+            'date': datetime.strptime(
+                i['date'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC()),
             'slug': i['slug'],
             'wordpress_id': int(i['wp_id']),
             'comments': i['comments'],
         }
+        if len(i['excerpt']) > 0:
+            yaml_header['excerpt'] = i['excerpt']
         if i['status'] != u'publish':
             yaml_header['published'] = False
 
@@ -275,10 +313,11 @@ def write_jekyll(data, target_format):
             # Chase down parent path, if any
             parentpath = ''
             item = i
-            while item['parent'] != "0":
-                item = next((parent for parent in data['items'] if parent['wp_id'] == item['parent']), None)
+            while item['parent'] != '0':
+                item = next((parent for parent in data['items']
+                             if parent['wp_id'] == item['parent']), None)
                 if item:
-                    parentpath = get_item_uid(item) + "/" + parentpath
+                    parentpath = get_item_uid(item) + '/' + parentpath
                 else:
                     break
             fn = get_item_path(i, parentpath)
@@ -287,7 +326,7 @@ def write_jekyll(data, target_format):
         elif i['type'] in item_type_filter:
             pass
         else:
-            print "Unknown item type :: " + i['type']
+            print 'Unknown item type :: ' + i['type']
 
         if download_images:
             for img in i['img_srcs']:
@@ -296,11 +335,13 @@ def write_jekyll(data, target_format):
                                         img.encode('utf-8')),
                                 get_attachment_path(img, i['uid']))
                 except:
-                    print "\n unable to download " + urljoin(data['header']['link'], img.encode('utf-8'))
+                    print '\n unable to download ' + urljoin(
+                        data['header']['link'], img.encode('utf-8'))
 
         if out is not None:
             def toyaml(data):
-                return yaml.safe_dump(data, allow_unicode=True, default_flow_style=False).decode('utf-8')
+                return yaml.safe_dump(data, allow_unicode=True,
+                                      default_flow_style=False).decode('utf-8')
 
             tax_out = {}
             for taxonomy in i['taxanomies']:
@@ -322,10 +363,10 @@ def write_jekyll(data, target_format):
             try:
                 out.write(html2fmt(i['body'], target_format))
             except:
-                print "\n Parse error on: " + i['title']
+                print '\n Parse error on: ' + i['title']
 
             out.close()
-    print "\n"
+    print '\n'
 
 wp_exports = glob(wp_exports + '/*.xml')
 for wpe in wp_exports:
